@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Товары</title>
+    <link rel="stylesheet" href="/static/styles-desktop.css">
+    <style>
+        .product-description {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            display: -webkit-box;
+            -webkit-line-clamp: 5;
+            -webkit-box-orient: vertical;
+            max-height: 7.5em;
+            transition: max-height 0.3s ease;
+        }
+
+        .product-description.expanded {
+            -webkit-line-clamp: unset;
+            max-height: none;
+        }
+
+        .toggle-description {
+            margin-top: 5px;
+            padding: 5px 10px;
+            font-size: 14px;
+            background-color: var(--button-bg, #eee);
+            color: var(--text, #333);
+            border: 1px solid #ccc;
+            border-radius: 6px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="sidebar">
+            <h2>Фильтр</h2>
+            <form id="filter-form">
+                <input type="text" name="search" placeholder="Поиск по названию"><br><br>
+
+                <div class="filter-section">
+                    <label>Категории:</label><br>
+                    {% for category in categories %}
+                        <input type="checkbox" name="category" value="{{ category }}"> {{ category }}<br>
+                    {% endfor %}
+                </div>
+
+                <div class="filter-section">
+                    <label>Цена от:</label><br>
+                    <input type="number" name="min_price"><br>
+                    <label>Цена до:</label><br>
+                    <input type="number" name="max_price"><br>
+                </div>
+
+                <button type="submit">Применить</button>
+            </form>
+        </div>
+
+        <div class="content">
+            <div class="sort-buttons">
+                <label>Сортировка:</label>
+                <button onclick="sortProducts('price_asc')">Цена ↑</button>
+                <button onclick="sortProducts('price_desc')">Цена ↓</button>
+                <button onclick="sortProducts('name_asc')">Название A→Я</button>
+                <button onclick="sortProducts('name_desc')">Название Я→A</button>
+                <button onclick="sortProducts('amount_asc')">Остаток ↑</button>
+                <button onclick="sortProducts('amount_desc')">Остаток ↓</button>
+            </div>
+
+            <div id="products-container"></div>
+
+            <div id="pagination">
+                <button id="first-page" onclick="changePage(1)">&#171;</button>
+                <div id="page-buttons"></div>
+                <button id="last-page" onclick="changePage(totalPages)">&#187;</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentPage = 1;
+        let totalPages = 1;
+        let currentSort = "";
+        const productsPerPage = 30;
+        const DESCRIPTION_LIMIT = 500;
+
+        function renderProducts(products) {
+            const container = document.getElementById("products-container");
+            container.innerHTML = "";
+
+            products.forEach(product => {
+                const isLong = product.description.length > DESCRIPTION_LIMIT;
+                const card = document.createElement("div");
+                card.className = "product-card";
+
+                card.innerHTML = `
+                    <h3 class="product-title"><a href="${product.product_url}" target="_blank">${product.name}</a></h3>
+                    <div class="product-content">
+                        <div class="product-image-container">
+                            <img src="${product.image_url || 'no-image.png'}" alt="Фото товара" class="product-image">
+                        </div>
+                        <div class="product-details">
+                            <p class="product-description">${product.description}</p>
+                            ${isLong ? `<button class="toggle-description">Показать больше</button>` : ""}
+                            <p><strong>Цена:</strong> ${product.price} ₽</p>
+                            <p><strong>Остаток:</strong> ${product.amount} шт.</p>
+                        </div>
+                    </div>
+                `;
+                container.appendChild(card);
+            });
+
+            updatePagination();
+            addDescriptionToggle();
+        }
+
+        function addDescriptionToggle() {
+            document.querySelectorAll('.toggle-description').forEach(button => {
+                button.addEventListener('click', function () {
+                    const description = this.previousElementSibling;
+                    const isExpanded = description.classList.toggle('expanded');
+                    this.textContent = isExpanded ? 'Скрыть' : 'Показать больше';
+                });
+            });
+        }
+
+        function updatePagination() {
+            const pageButtonsContainer = document.getElementById("page-buttons");
+            pageButtonsContainer.innerHTML = "";
+
+            const minPage = Math.max(currentPage - 4, 1);
+            const maxPage = Math.min(currentPage + 4, totalPages);
+
+            for (let i = minPage; i <= maxPage; i++) {
+                const button = document.createElement("button");
+                button.textContent = i;
+                button.classList.toggle("active", i === currentPage);
+                button.onclick = () => {
+                    currentPage = i;
+                    loadProducts();
+                    scrollToTop();
+                };
+                pageButtonsContainer.appendChild(button);
+            }
+        }
+
+        function changePage(page) {
+            if (page < 1 || page > totalPages) return;
+            currentPage = page;
+            loadProducts();
+            scrollToTop();
+        }
+
+        function scrollToTop() {
+            window.scrollTo({
+                top: 0,
+                behavior: 'smooth'
+            });
+        }
+
+        function loadProducts() {
+            const formData = new FormData(document.getElementById("filter-form"));
+            const params = new URLSearchParams(formData);
+            params.set("page", currentPage);
+            if (currentSort) {
+                params.set("sort", currentSort);
+            }
+
+            fetch(`/get_products?${params.toString()}`)
+                .then(res => res.json())
+                .then(data => {
+                    totalPages = data.total_pages;
+                    renderProducts(data.products);
+                });
+        }
+
+        document.getElementById("filter-form").addEventListener("submit", function (e) {
+            e.preventDefault();
+            currentPage = 1;
+            loadProducts();
+        });
+
+        function sortProducts(type) {
+            currentSort = type;
+            currentPage = 1;
+            loadProducts();
+        }
+
+        window.onload = () => {
+            loadProducts();
+        };
+    </script>
+</body>
+</html>
