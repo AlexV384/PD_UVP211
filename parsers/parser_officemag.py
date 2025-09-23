@@ -1,9 +1,9 @@
-import json
 import time
+import psycopg2
+from psycopg2 import sql
 from bs4 import BeautifulSoup
 from selenium import webdriver
 from selenium_stealth import stealth
-
 
 def init_webdriver():
     options = webdriver.ChromeOptions()
@@ -12,12 +12,10 @@ def init_webdriver():
     stealth(driver, platform="Win32")
     return driver
 
-
 def scrolldown(driver, deep=3, delay=0.5):
     for _ in range(deep):
         driver.execute_script('window.scrollBy(0, 500)')
         time.sleep(delay)
-
 
 def get_sections_from_url(driver, url):
     driver.get(url)
@@ -33,7 +31,6 @@ def get_sections_from_url(driver, url):
             sections[name] = full_url
     return sections
 
-
 def get_leaf_subsubsections(driver, top_url):
     subsubsections = {}
     visited = set()
@@ -46,12 +43,13 @@ def get_leaf_subsubsections(driver, top_url):
                 visited.add(url)
     return subsubsections
 
-
-def parse_products_from_page(driver, base_url):
+def parse_products_from_page(driver, base_url, total_count=0, max_products=None):
     page = 1
     products = {}
     idx_global = 0
     while True:
+        if max_products is not None and total_count >= max_products:
+            break
         url = f"{base_url}?PAGEN_1={page}" if page > 1 else base_url
         driver.get(url)
         time.sleep(2)
@@ -63,7 +61,10 @@ def parse_products_from_page(driver, base_url):
             print(f"Страница {page} пуста, заканчиваем.")
             break
         print(f"Парсинг страницы {page}, найдено товаров: {len(items)}")
+        page_count = 0
         for item in items:
+            if max_products is not None and total_count >= max_products:
+                break
             try:
                 name_tag = item.select_one("div.nameWrapper a")
                 name = name_tag.text.strip() if name_tag else "Без названия"
@@ -83,6 +84,7 @@ def parse_products_from_page(driver, base_url):
                 image_url = img_tag["src"] if img_tag else "Фото не найдено"
                 product_key = f"{product_url}_prod_{idx_global}"
                 idx_global += 1
+
                 products[product_key] = {
                     "name": name,
                     "description": description,
@@ -91,39 +93,82 @@ def parse_products_from_page(driver, base_url):
                     "image_url": image_url,
                     "product_url": product_url
                 }
+
+                total_count += 1
+                page_count += 1
             except Exception as e:
                 print(f"Ошибка при парсинге товара: {e}")
+        print(f"Страница {page} обработана, добавлено товаров: {page_count}, всего спаршено: {total_count}")
         page += 1
-    print(f"Всего товаров собрано: {len(products)}")
-    return products
+    return products, total_count
 
-
-def build_catalog_with_products(driver, base_url):
+def build_catalog_with_products(driver, base_url, max_products=None):
     all_data = {}
+    total_count = 0
     top_sections = get_sections_from_url(driver, base_url)
     for i, (section_name, section_url) in enumerate(top_sections.items(), 1):
+        if max_products is not None and total_count >= max_products:
+            break
         print(f"\n[{i}/{len(top_sections)}] Главный раздел: {section_name}")
         leaf_sections = get_leaf_subsubsections(driver, section_url)
         if not leaf_sections:
             print("Нет подподразделов, пропускаем.")
             continue
         for leaf_name, leaf_url in leaf_sections.items():
+            if max_products is not None and total_count >= max_products:
+                break
             print(f"Парсинг товаров из подподраздела: {leaf_name}")
-            products = parse_products_from_page(driver, leaf_url)
+            products, total_count = parse_products_from_page(driver, leaf_url, total_count, max_products)
             all_data.setdefault(section_name, {}).update(products)
-
     return all_data
 
+def save_to_postgres(data, table_name="officemag_products"):
+    conn = psycopg2.connect(
+        dbname="mydatabase",
+        user="myuser",
+        password="mypassword",
+        host="localhost",
+        port="5432"
+    )
+    cur = conn.cursor()
+    cur.execute(sql.SQL(f"""
+        CREATE TABLE IF NOT EXISTS {table_name} (
+            id SERIAL PRIMARY KEY,
+            name TEXT,
+            description TEXT,
+            price TEXT,
+            amount TEXT,
+            image_url TEXT,
+            product_url TEXT
+        )
+    """))
+    for section, products in data.items():
+        for _, product in products.items():
+            cur.execute(
+                sql.SQL(f"""
+                    INSERT INTO {table_name} (name, description, price, amount, image_url, product_url)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                """),
+                (
+                    product["name"],
+                    product["description"],
+                    product["price"],
+                    product["amount"],
+                    product["image_url"],
+                    product["product_url"]
+                )
+            )
+    conn.commit()
+    cur.close()
+    conn.close()
+    print(f"Данные сохранены в PostgreSQL таблицу '{table_name}'")
 
 if __name__ == "__main__":
     driver = init_webdriver()
     try:
         base_url = "https://www.officemag.ru/catalog/"
-        data = build_catalog_with_products(driver, base_url)
-
-        with open("officemag_products.json", "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=4)
-
-        print("\nГотово! Сохранено в 'officemag_products.json'")
+        data = build_catalog_with_products(driver, base_url, max_products=None)
+        save_to_postgres(data, table_name="officemag_products")
+        print("\nГотово! Данные сохранены в PostgreSQL")
     finally:
         driver.quit()
