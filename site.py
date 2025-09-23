@@ -14,15 +14,12 @@ DB_PARAMS = {
 }
 
 def get_all_products():
-    """Получаем все продукты из PostgreSQL"""
     conn = psycopg2.connect(**DB_PARAMS)
     cur = conn.cursor(cursor_factory=RealDictCursor)
     cur.execute("SELECT * FROM officemag_products")
     products = cur.fetchall()
     cur.close()
     conn.close()
-
-    # Преобразуем данные в нужный формат
     result = []
     for p in products:
         price_str = p.get("price", "0").replace(" ", "").replace(",", ".")
