@@ -43,7 +43,7 @@ def get_leaf_subsubsections(driver, top_url):
                 visited.add(url)
     return subsubsections
 
-def parse_products_from_page(driver, base_url, total_count=0, max_products=None):
+def parse_products_from_page(driver, base_url, total_count, max_products=None):
     page = 1
     products = {}
     idx_global = 0
@@ -58,9 +58,10 @@ def parse_products_from_page(driver, base_url, total_count=0, max_products=None)
         soup = BeautifulSoup(driver.page_source, "html.parser")
         items = soup.find_all("div", class_="listItem__content")
         if not items:
-            print(f"Страница {page} пуста, заканчиваем.")
+            print(f"Страница {page} пуста ({url}), заканчиваем.")
             break
-        print(f"Парсинг страницы {page}, найдено товаров: {len(items)}")
+        print(f"\nПарсинг страницы {page} ({url})")
+        print(f"Найдено товаров: {len(items)}")
         page_count = 0
         for item in items:
             if max_products is not None and total_count >= max_products:
@@ -84,7 +85,6 @@ def parse_products_from_page(driver, base_url, total_count=0, max_products=None)
                 image_url = img_tag["src"] if img_tag else "Фото не найдено"
                 product_key = f"{product_url}_prod_{idx_global}"
                 idx_global += 1
-
                 products[product_key] = {
                     "name": name,
                     "description": description,
@@ -93,14 +93,14 @@ def parse_products_from_page(driver, base_url, total_count=0, max_products=None)
                     "image_url": image_url,
                     "product_url": product_url
                 }
-
                 total_count += 1
                 page_count += 1
             except Exception as e:
                 print(f"Ошибка при парсинге товара: {e}")
-        print(f"Страница {page} обработана, добавлено товаров: {page_count}, всего спаршено: {total_count}")
+        print(f"Страница {page} обработана ({url}), добавлено товаров: {page_count}, всего спаршено: {total_count}")
         page += 1
     return products, total_count
+
 
 def build_catalog_with_products(driver, base_url, max_products=None):
     all_data = {}
@@ -109,7 +109,7 @@ def build_catalog_with_products(driver, base_url, max_products=None):
     for i, (section_name, section_url) in enumerate(top_sections.items(), 1):
         if max_products is not None and total_count >= max_products:
             break
-        print(f"\n[{i}/{len(top_sections)}] Главный раздел: {section_name}")
+        print(f"\n[{i}/{len(top_sections)}] Главный раздел: {section_name} ({section_url})")
         leaf_sections = get_leaf_subsubsections(driver, section_url)
         if not leaf_sections:
             print("Нет подподразделов, пропускаем.")
@@ -117,9 +117,10 @@ def build_catalog_with_products(driver, base_url, max_products=None):
         for leaf_name, leaf_url in leaf_sections.items():
             if max_products is not None and total_count >= max_products:
                 break
-            print(f"Парсинг товаров из подподраздела: {leaf_name}")
+            print(f"Парсинг товаров из подподраздела: {leaf_name} ({leaf_url})")
             products, total_count = parse_products_from_page(driver, leaf_url, total_count, max_products)
             all_data.setdefault(section_name, {}).update(products)
+    print(f"\nОбщее количество товаров спаршено: {total_count}")
     return all_data
 
 def save_to_postgres(data, table_name="officemag_products"):
