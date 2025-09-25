@@ -1,5 +1,6 @@
-import json
 import time
+import psycopg2
+from psycopg2 import sql
 from bs4 import BeautifulSoup
 from selenium import webdriver
 from selenium_stealth import stealth
@@ -14,7 +15,7 @@ def init_webdriver():
 
 
 def scrolldown(driver, deep):
-    for _ in range(deep):
+    for i in range(deep):
         driver.execute_script('window.scrollBy(0, 500)')
         time.sleep(1)
 
@@ -23,10 +24,7 @@ def get_catalog_sections(driver, base_url):
     driver.get(base_url)
     scrolldown(driver, 20)
     soup = BeautifulSoup(driver.page_source, "html.parser")
-    sections = soup.find_all(
-        "a",
-        class_="src-components-CatalogList-Block-Block__titleLink src-components-CatalogList-Block-Block__titleLink_header"
-    )
+    sections = soup.find_all("a", class_="src-components-CatalogList-Block-Block__titleLink src-components-CatalogList-Block-Block__titleLink_header")
     catalog_urls = {}
     for section in sections:
         section_href = section.get("href")
@@ -37,27 +35,11 @@ def get_catalog_sections(driver, base_url):
     return catalog_urls
 
 
-def get_all_pages(driver, base_url):
-    all_products = {}
-    page = 1
-    while True:
-        current_url = f"{base_url}?limit=108&p={page}"
-        print(f"Парсим страницу {page}: {current_url}")
-        products = get_mainpage_cards(driver, current_url)
-        if not products:
-            print("Достигнут конец каталога или товары не загружены.")
-            break
-        all_products.update(products)
-        page += 1
-    return all_products
-
-
 def get_mainpage_cards(driver, url):
     driver.get(url)
     scrolldown(driver, 50)
     soup = BeautifulSoup(driver.page_source, "html.parser")
-    product_divs = soup.find_all("div",
-                                 class_="src-components-SSRLazyRender-SSRLazyRender__SSRLazyRender src-components-Products-Products__product")
+    product_divs = soup.find_all("div", class_="src-components-SSRLazyRender-SSRLazyRender__SSRLazyRender src-components-Products-Products__product")
     if not product_divs:
         print("На этой странице нет товаров.")
         return {}
@@ -91,6 +73,69 @@ def get_mainpage_cards(driver, url):
     return products
 
 
+def get_all_pages(driver, base_url):
+    all_products = {}
+    page = 1
+    total = 0
+    while True:
+        current_url = f"{base_url}?limit=108&p={page}"
+        print(f"\nПарсим страницу {page}: {current_url}")
+        products = get_mainpage_cards(driver, current_url)
+        if not products:
+            print("Достигнут конец каталога или товары не загружены.")
+            break
+        all_products.update(products)
+        total += len(products)
+        print(f"Найдено товаров на странице {page}: {len(products)} (суммарно: {total})")
+        page += 1
+    print(f"\nИтого товаров собрано: {total}")
+    return all_products
+
+
+def save_to_postgres(data, table_name="kancleroptshilovo_products"):
+    conn = psycopg2.connect(
+        dbname="mydatabase",
+        user="myuser",
+        password="mypassword",
+        host="localhost",
+        port="5432"
+    )
+    cur = conn.cursor()
+    cur.execute(sql.SQL(f"""
+        CREATE TABLE IF NOT EXISTS {table_name} (
+            id SERIAL PRIMARY KEY,
+            name TEXT,
+            description TEXT,
+            price TEXT,
+            amount TEXT,
+            image_url TEXT,
+            product_url TEXT
+        )
+    """))
+
+    for section, products in data.items():
+        for _, product in products.items():
+            cur.execute(
+                sql.SQL(f"""
+                    INSERT INTO {table_name} (name, description, price, amount, image_url, product_url)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                """),
+                (
+                    product["name"],
+                    product["description"],
+                    product["price"],
+                    product["amount"],
+                    product["image_url"],
+                    product["product_url"]
+                )
+            )
+
+    conn.commit()
+    cur.close()
+    conn.close()
+    print(f"\nДанные сохранены в PostgreSQL таблицу '{table_name}'")
+
+
 if __name__ == "__main__":
     driver = init_webdriver()
     try:
@@ -98,13 +143,13 @@ if __name__ == "__main__":
         catalog_sections = get_catalog_sections(driver, base_url)
         all_data = {}
         for section_name, section_url in catalog_sections.items():
-            print(f"Парсинг раздела каталога: {section_name} ({section_url})")
+            print(f"\nПарсинг раздела: {section_name} ({section_url})")
             base_section_url = section_url.replace("/catalog-list", "/catalog")
             products = get_all_pages(driver, base_section_url)
             all_data[section_name] = products
-        with open("products.json", "w", encoding="utf-8") as f:
-            json.dump(all_data, f, ensure_ascii=False, indent=4)
-        print(f"Всего каталогов: {len(catalog_sections)}")
+        save_to_postgres(all_data, table_name="kancleroptshilovo_products")
+        print(f"\nВсего каталогов: {len(catalog_sections)}")
         print(f"Всего товаров: {sum(len(products) for products in all_data.values())}")
+
     finally:
         driver.quit()
