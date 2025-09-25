@@ -1,2 +1,0 @@
-add a database
-relocate data from json to database
