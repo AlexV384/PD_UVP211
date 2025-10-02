@@ -39,7 +39,7 @@ def get_catalog_sections(driver, base_url):
     return catalog_urls
 
 
-def parse_products_from_page(driver, url, total_count, max_products=None):
+def get_mainpage_cards(driver, url):
     driver.get(url)
     scrolldown(driver, 50)
     soup = BeautifulSoup(driver.page_source, "html.parser")
@@ -47,10 +47,10 @@ def parse_products_from_page(driver, url, total_count, max_products=None):
         "div",
         class_="src-components-SSRLazyRender-SSRLazyRender__SSRLazyRender src-components-Products-Products__product"
     )
+    if not product_divs:
+        return {}
     products = {}
     for idx, product in enumerate(product_divs):
-        if max_products is not None and total_count >= max_products:
-            break
         try:
             name_a = product.find("a", class_="src-components-Product-ProductList-ProductList__name")
             name_span = name_a.find("span", itemprop="name") if name_a else None
@@ -77,10 +77,9 @@ def parse_products_from_page(driver, url, total_count, max_products=None):
                 "image_url": image_url,
                 "product_url": product_url
             }
-            total_count += 1
         except Exception as e:
             print(f"Ошибка при обработке товара {idx}: {e}")
-    return products, total_count
+    return products
 
 
 def build_catalog_with_products(driver, base_url, max_products=None):
@@ -92,8 +91,22 @@ def build_catalog_with_products(driver, base_url, max_products=None):
             break
         print(f"\nПарсинг раздела: {section_name} ({section_url})")
         base_section_url = section_url.replace("/catalog-list", "/catalog")
-        products, total_count = parse_products_from_page(driver, base_section_url, total_count, max_products)
-        all_data[section_name] = products
+        page = 1
+        while True:
+            if max_products is not None and total_count >= max_products:
+                break
+            current_url = f"{base_section_url}?limit=108&p={page}"
+            print(f"Парсим страницу {page}: {current_url}")
+            products = get_mainpage_cards(driver, current_url)
+            if not products:
+                break
+            if max_products is not None and total_count + len(products) > max_products:
+                needed = max_products - total_count
+                products = dict(list(products.items())[:needed])
+            all_data.setdefault(section_name, {}).update(products)
+            total_count += len(products)
+            print(f"Добавлено товаров: {len(products)}, всего спаршено: {total_count}")
+            page += 1
     print(f"\nОбщее количество товаров спаршено: {total_count}")
     return all_data
 
@@ -138,6 +151,5 @@ if __name__ == "__main__":
         base_url = "https://kancleroptshilovo.ru/catalog-list"
         data = build_catalog_with_products(driver, base_url, max_products=None)
         save_to_sqlite(data, table_name="kancleroptshilovo_products")
-        print(f"\nВсего товаров спаршено: {sum(len(products) for products in data.values())}")
     finally:
         driver.quit()
