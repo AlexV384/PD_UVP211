@@ -136,7 +136,7 @@ if __name__ == "__main__":
     driver = init_webdriver()
     try:
         base_url = "https://kancleroptshilovo.ru/catalog-list"
-        data = build_catalog_with_products(driver, base_url, max_products=20)
+        data = build_catalog_with_products(driver, base_url, max_products=None)
         save_to_sqlite(data, table_name="kancleroptshilovo_products")
         print(f"\nВсего товаров спаршено: {sum(len(products) for products in data.values())}")
     finally:
