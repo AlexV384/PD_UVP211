@@ -1,9 +1,10 @@
 import time
-import psycopg2
-from psycopg2 import sql
+import sqlite3
 from bs4 import BeautifulSoup
 from selenium import webdriver
 from selenium_stealth import stealth
+
+DB_FILE = "data.db"
 
 def init_webdriver():
     options = webdriver.ChromeOptions()
@@ -123,18 +124,13 @@ def build_catalog_with_products(driver, base_url, max_products=None):
     print(f"\nОбщее количество товаров спаршено: {total_count}")
     return all_data
 
-def save_to_postgres(data, table_name="officemag_products"):
-    conn = psycopg2.connect(
-        dbname="mydatabase",
-        user="myuser",
-        password="mypassword",
-        host="localhost",
-        port="5432"
-    )
+def save_to_sqlite(data, table_name="officemag_products"):
+    conn = sqlite3.connect(DB_FILE)
     cur = conn.cursor()
-    cur.execute(sql.SQL(f"""
+    cur.execute(f"""
         CREATE TABLE IF NOT EXISTS {table_name} (
-            id SERIAL PRIMARY KEY,
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            category TEXT,
             name TEXT,
             description TEXT,
             price TEXT,
@@ -142,34 +138,31 @@ def save_to_postgres(data, table_name="officemag_products"):
             image_url TEXT,
             product_url TEXT
         )
-    """))
+    """)
     for section, products in data.items():
         for _, product in products.items():
-            cur.execute(
-                sql.SQL(f"""
-                    INSERT INTO {table_name} (name, description, price, amount, image_url, product_url)
-                    VALUES (%s, %s, %s, %s, %s, %s)
-                """),
-                (
-                    product["name"],
-                    product["description"],
-                    product["price"],
-                    product["amount"],
-                    product["image_url"],
-                    product["product_url"]
-                )
-            )
+            cur.execute(f"""
+                INSERT INTO {table_name} (category, name, description, price, amount, image_url, product_url)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (
+                section,
+                product["name"],
+                product["description"],
+                product["price"],
+                product["amount"],
+                product["image_url"],
+                product["product_url"]
+            ))
     conn.commit()
-    cur.close()
     conn.close()
-    print(f"Данные сохранены в PostgreSQL таблицу '{table_name}'")
+    print(f"Данные сохранены в SQLite таблицу '{table_name}' ({DB_FILE})")
 
 if __name__ == "__main__":
     driver = init_webdriver()
     try:
         base_url = "https://www.officemag.ru/catalog/"
         data = build_catalog_with_products(driver, base_url, max_products=None)
-        save_to_postgres(data, table_name="officemag_products")
-        print("\nГотово! Данные сохранены в PostgreSQL")
+        save_to_sqlite(data, table_name="officemag_products")
+        print("\nГотово! Данные сохранены в SQLite")
     finally:
         driver.quit()
